@@ -18,9 +18,16 @@ st.markdown("""
 
 @st.cache_data
 def load_data():
-    if not os.path.exists("bangumi_data.json"): return None
-    with open("bangumi_data.json", "r", encoding="utf-8") as f:
+    # 获取当前脚本（app.py）所在的绝对路径
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    # 拼接出数据的绝对路径
+    data_path = os.path.join(current_dir, "bangumi_data.json")
+    
+    if not os.path.exists(data_path): 
+        return None
+    with open(data_path, "r", encoding="utf-8") as f:
         return json.load(f)
+
 
 raw_data = load_data()
 if not raw_data:
