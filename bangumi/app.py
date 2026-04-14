@@ -5,152 +5,147 @@ import os
 import plotly.express as px
 
 # =========================
-# 1. 核心配置
+# 1. 页面基础配置
 # =========================
-st.set_page_config(page_title="ZhangJiechen's Anime Hub", layout="wide", page_icon="🎬")
+st.set_page_config(
+    page_title="Bangumi 追番审计系统",
+    page_icon="🎬",
+    layout="wide"
+)
 
-st.markdown("""
-    <style>
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    .stExpander { border: 1px solid #f0f2f6; border-radius: 8px; margin-bottom: 5px; }
-    </style>
-    """, unsafe_allow_html=True)
-
+# =========================
+# 2. 数据加载逻辑 (适配 V6.7 嵌套结构)
+# =========================
 @st.cache_data
 def load_data():
-    # 获取当前脚本（app.py）所在的绝对路径
+    # 获取 app.py 所在的绝对路径，确保在云端也能找到 json
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    # 拼接出数据的绝对路径
     data_path = os.path.join(current_dir, "bangumi_data.json")
     
-    if not os.path.exists(data_path): 
-        return None
+    if not os.path.exists(data_path):
+        return None, None
+        
     with open(data_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        raw_data = json.load(f)
+        
+    # 处理 V6.7 之前的旧格式兼容性
+    if isinstance(raw_data, list):
+        return "", pd.DataFrame(raw_data)
+    
+    # 解析 V6.7 的新格式
+    user_bio = raw_data.get("user_info", {}).get("bio", "暂无简介")
+    df = pd.DataFrame(raw_data.get("collections", []))
+    return user_bio, df
 
-
-raw_data = load_data()
-if not raw_data:
-    st.error("❌ 数据文件不存在，请确保 bangumi_data.json 在同一目录下")
-    st.stop()
-
-df = pd.DataFrame(raw_data)
-
-# 将年份转换为数字，方便过滤（处理非数字年份或'未知'的情况）
-df['year_num'] = pd.to_numeric(df['year'], errors='coerce').fillna(0)
-
-# 提取所有不重复的标签，用于“种类分类”
-all_unique_tags = sorted(list(set(tag for tags in df['tags'] for tag in tags if tag)))
+# 加载数据
+bio, df = load_data()
 
 # =========================
-# 2. 侧边栏：全能过滤器
+# 3. 侧边栏：个人名片
 # =========================
-st.sidebar.title("🎬 审计过滤器")
-
-# (1) 状态过滤
-status_map = {1:"想看", 2:"看过", 3:"在看", 4:"搁置"}
-selected_status = st.sidebar.multiselect("观看状态", options=[1,2,3,4], default=[2,3], format_func=lambda x: status_map[x])
-
-# (2) 评分过滤
-score_range = st.sidebar.slider("我的评分范围", min_value=0, max_value=10, value=(0, 10))
-
-# (3) 年限过滤
-min_y = int(df[df['year_num'] > 1900]['year_num'].min()) if not df[df['year_num'] > 1900].empty else 2000
-max_y = int(df['year_num'].max()) if not df.empty else 2026
-year_range = st.sidebar.slider("作品年限", min_y, max_y, (min_y, max_y))
-
-# (4) 种类/标签过滤
-selected_tags = st.sidebar.multiselect("番剧种类 (包含以下任意标签)", options=all_unique_tags)
-
-# --- 应用所有过滤条件 ---
-mask = df['status'].isin(selected_status)
-mask &= (df['year_num'] >= year_range[0]) & (df['year_num'] <= year_range[1])
-mask &= (df['my_rate'] >= score_range[0]) & (df['my_rate'] <= score_range[1])
-
-if selected_tags:
-    # 只要作品的标签中包含用户选择的任意一个标签，就保留
-    mask &= df['tags'].apply(lambda x: any(tag in selected_tags for tag in x))
-
-df_filtered = df[mask].copy()
-
-# =========================
-# 3. 主界面布局
-# =========================
-st.title("🎬 个人动画数据审计中心")
-
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("入库总数", len(df))
-m2.metric("当前筛选", len(df_filtered))
-avg_val = df_filtered[df_filtered['my_rate']>0]['my_rate'].mean()
-m3.metric("平均给分", f"{avg_val:.2f}" if not pd.isna(avg_val) else "N/A")
-bias_val = (df_filtered['my_rate'] - df_filtered['global_score']).mean()
-m4.metric("审美偏差", f"{bias_val:+.2f}")
-
-st.divider()
-
-# =========================
-# 4. 交互式图表
-# =========================
-c1, c2 = st.columns([6, 4])
-
-with c1:
-    st.subheader("📊 评分分布 (悬停查看作品)")
-    plot_df = df_filtered[df_filtered['my_rate'] > 0].copy()
-    if not plot_df.empty:
-        fig = px.histogram(
-            plot_df, x="my_rate", nbins=10, color_discrete_sequence=['#FF4B4B'],
-            labels={'my_rate': '我的评分', 'count': '作品数量'},
-            hover_name="name_cn", hover_data={"my_rate": True, "global_score": True, "year": True}
-        )
-        fig.update_layout(bargap=0.1, margin=dict(l=10, r=10, t=10, b=10))
-        fig.update_traces(hovertemplate="<b>%{hovertext}</b><br>我的评分: %{x}<br>全站评分: %{customdata[0]}<extra></extra>")
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.write("当前筛选条件下无评分数据")
-
-with c2:
-    st.subheader("🏷️ 核心喜好标签")
-    all_tags_filtered = []
-    for t in df_filtered['tags']: all_tags_filtered.extend(t)
-    tag_counts = pd.Series(all_tags_filtered).value_counts().head(12)
-    if not tag_counts.empty:
-        fig_tag = px.bar(tag_counts, x=tag_counts.values, y=tag_counts.index, 
-                         orientation='h', color=tag_counts.values, color_continuous_scale='Reds',
-                         labels={'x': '作品数', 'y': '标签'})
-        fig_tag.update_layout(showlegend=False)
-        st.plotly_chart(fig_tag, use_container_width=True)
-
-# =========================
-# 5. 全局评价审计墙
-# =========================
-st.divider()
-st.subheader(f"🔍 全局评价审计墙 (共 {len(df_filtered)} 部)")
-q = st.text_input("搜索番名、年份或评价：")
-
-if q:
-    search_df = df_filtered[df_filtered.apply(lambda row: q.lower() in str(row).lower(), axis=1)]
+st.sidebar.title("👤 个人主页")
+if bio:
+    st.sidebar.markdown("### 个人简介")
+    # 使用 code 块或 info 框来展示你的看番哲学，保留换行和格式
+    st.sidebar.info(bio)
 else:
-    # 核心修改：移除 .head(30)，显示全局过滤后的数据
-    search_df = df_filtered.sort_values(by="my_rate", ascending=False)
+    st.sidebar.warning("未在 JSON 中找到个人简介，请检查脚本版本。")
 
-# 为了防止浏览器卡死，加上一个小提示
-if len(search_df) > 500:
-    st.caption("⚠️ 当前显示数量较多，向下滚动可能需要加载时间。")
+st.sidebar.divider()
+st.sidebar.caption("数据同步自 Bangumi API v0")
 
-for _, row in search_df.iterrows():
-    rate_str = f"⭐ {row['my_rate']}" if row['my_rate'] > 0 else "无评分"
-    with st.expander(f"{rate_str} | {row['name_cn']} ({row['year']})"):
-        col_l, col_r = st.columns([1, 3])
-        with col_l:
-            st.write(f"**全站排名:** {row['global_rank']}")
-            st.write(f"**全站评分:** {row['global_score']}")
-            st.write(f"**标签:** {' / '.join(row['tags'])}")
-        with col_r:
-            comment_text = row.get('my_comment')
-            if pd.isna(comment_text) or str(comment_text).strip() == "" or comment_text is None:
-                box_type = st.warning 
-                final_comment = "尚未评价"
+# =========================
+# 4. 主界面：核心看板
+# =========================
+st.title("🎬 我的番剧审美审计看板")
+
+if df is None or df.empty:
+    st.error("❌ 未找到 bangumi_data.json 文件，请先运行同步脚本！")
+else:
+    # --- 数据概览卡片 ---
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("总收藏数", len(df))
+    with col2:
+        watched_count = len(df[df['status'] == 2])
+        st.metric("已看完", watched_count)
+    with col3:
+        avg_score = df[df['my_rate'] > 0]['my_rate'].mean()
+        st.metric("平均评分", f"{avg_score:.2f}")
+    with col4:
+        current_year = df[df['year'] != "未知"]['year'].max()
+        st.metric("最近活跃年份", current_year)
+
+    st.divider()
+
+    # --- 筛选器 ---
+    st.subheader("🔍 快速筛选与检索")
+    search_col, status_col = st.columns([3, 1])
+    with search_col:
+        keyword = st.text_input("输入番剧名称关键词", "")
+    with status_col:
+        status_map = {1: "想看", 2: "看过", 3: "在看", 4: "搁置", 5: "抛弃"}
+        selected_status_name = st.selectbox("观看状态", ["全部"] + list(status_map.values()))
+
+    # 执行过滤
+    filtered_df = df.copy()
+    if keyword:
+        filtered_df = filtered_df[filtered_df['name_cn'].str.contains(keyword, case=False, na=False)]
+    if selected_status_name != "全部":
+        rev_status_map = {v: k for k, v in status_map.items()}
+        filtered_df = filtered_df[filtered_df['status'] == rev_status_map[selected_status_name]]
+
+    # --- 核心图表区 ---
+    tab1, tab2 = st.tabs(["📊 审美分析", "📋 数据详表"])
+
+    with tab1:
+        chart_col1, chart_col2 = st.columns(2)
+        
+        with chart_col1:
+            st.markdown("#### 个人评分分布")
+            # 过滤掉 0 分（未评分）的数据
+            rated_df = filtered_df[filtered_df['my_rate'] > 0]
+            if not rated_df.empty:
+                fig_hist = px.histogram(rated_df, x="my_rate", nbins=10, 
+                                      labels={'my_rate':'分值'}, 
+                                      color_discrete_sequence=['#ff9999'])
+                st.plotly_chart(fig_hist, use_container_width=True)
             else:
-                box_type = st.info 
-                final_comment = comment_text
-            box_type(f"**我的评价:** \n\n {final_comment}")
+                st.write("暂无评分数据")
+
+        with chart_col2:
+            st.markdown("#### 个人评分 vs 站内平均分")
+            # 过滤掉 0 分数据进行对比
+            compare_df = filtered_df[(filtered_df['my_rate'] > 0) & (filtered_df['global_score'] > 0)]
+            if not compare_df.empty:
+                fig_scatter = px.scatter(compare_df, x="global_score", y="my_rate", 
+                                       hover_name="name_cn",
+                                       labels={'global_score':'全站平均分', 'my_rate':'我的评分'},
+                                       color="my_rate", color_continuous_scale="Viridis")
+                # 添加 1:1 参照线
+                fig_scatter.add_shape(type="line", x0=0, y0=0, x1=10, y1=10, 
+                                    line=dict(color="Red", dash="dash"))
+                st.plotly_chart(fig_scatter, use_container_width=True)
+            else:
+                st.write("数据不足，无法生成对比图")
+
+    with tab2:
+        # --- 数据表格展示 ---
+        st.markdown(f"找到 {len(filtered_df)} 条记录")
+        
+        # 整理表格列名，让它更好看
+        display_df = filtered_df.copy()
+        display_df['status'] = display_df['status'].map(status_map)
+        display_df['tags'] = display_df['tags'].apply(lambda x: " | ".join(x) if isinstance(x, list) else x)
+        
+        # 重新排序并重命名
+        display_df = display_df[['name_cn', 'year', 'my_rate', 'global_score', 'status', 'my_comment', 'tags']]
+        display_df.columns = ['番剧名称', '年份', '我的评分', '站内评分', '状态', '我的短评', '标签']
+
+        st.dataframe(display_df, use_container_width=True, height=600)
+
+# =========================
+# 5. 版权底部
+# =========================
+st.divider()
+st.caption("Developed by Zhang Jiechen | 基于 Streamlit & Bangumi API")
