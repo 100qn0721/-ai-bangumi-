@@ -4,121 +4,91 @@ import json
 import os
 import plotly.express as px
 
-st.set_page_config(page_title="Bangumi 追番审计", page_icon="🎬", layout="wide")
+st.set_page_config(page_title="ZhangJiechen 的番剧审计", page_icon="🎬", layout="wide")
 
+# 加载数据
 @st.cache_data
 def load_data():
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    data_path = os.path.join(current_dir, "bangumi_data.json")
-    
-    if not os.path.exists(data_path):
-        return None, None
-        
-    try:
-        with open(data_path, "r", encoding="utf-8") as f:
-            raw_data = json.load(f)
-            
-        if isinstance(raw_data, list):
-            return "⚠️ 请运行最新版 bangumi.py 更新数据以显示简介", pd.DataFrame(raw_data)
-        
-        user_bio = raw_data.get("user_info", {}).get("bio", "暂无简介")
-        df = pd.DataFrame(raw_data.get("collections", []))
-        return user_bio, df
-    except Exception as e:
-        st.error(f"数据解析失败: {e}")
-        return None, None
+    data_path = os.path.join(os.path.dirname(__file__), "bangumi_data.json")
+    if not os.path.exists(data_path): return None, None
+    with open(data_path, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+    if isinstance(raw, list): return "请更新数据", pd.DataFrame(raw)
+    return raw.get("user_info", {}).get("bio", ""), pd.DataFrame(raw.get("collections", []))
 
 bio, df = load_data()
 
-# =========================
-# 侧边栏：个人名片
-# =========================
-st.sidebar.title("👤 个人主页")
+# --- 侧边栏：个人介绍 ---
+st.sidebar.title("👤 个人介绍")
 if bio:
-    st.sidebar.markdown("### 看番哲学")
-    # 使用 code 块能完美保留你写的换行和颜文字
-    st.sidebar.code(bio, language="text") 
+    # 蓝色背景框展示你的看番宣言
+    st.sidebar.info(bio)
 
 st.sidebar.divider()
-st.sidebar.caption("数据同步自 Bangumi API v0")
+st.sidebar.caption("数据来源：Bangumi API v0")
 
-# =========================
-# 主界面
-# =========================
-st.title("🎬 我的番剧审美审计看板")
-
+# --- 主界面 ---
 if df is None or df.empty:
-    st.warning("📡 正在等待数据上传或文件不存在...")
+    st.error("未找到数据，请运行脚本并上传 JSON！")
 else:
-    # --- 1. 指标卡片 ---
-    c1, c2, c3 = st.columns(3)
-    c1.metric("总收藏", len(df))
-    c2.metric("已看完", len(df[df['status'] == 2]))
-    c3.metric("平均评分", f"{df[df['my_rate'] > 0]['my_rate'].mean():.2f}")
+    st.title("🎬 番剧审美审计看板")
     
-    st.divider()
+    # 顶部指标
+    m1, m2, m3 = st.columns(3)
+    m1.metric("总收藏", len(df))
+    m2.metric("平均给分", f"{df[df['my_rate']>0]['my_rate'].mean():.2f}")
+    m3.metric("最近更新", df['updated_at'].max()[:10] if 'updated_at' in df.columns else "未知")
 
-    # --- 2. 强大的高级筛选器 ---
-    st.subheader("🔍 高级多维筛选")
-    
-    # 提取所有存在的年份和标签
-    all_years = sorted([y for y in df['year'].unique() if y != "未知"], reverse=True)
-    all_tags = set()
-    for tags in df['tags'].dropna():
-        if isinstance(tags, list):
-            for t in tags: all_tags.add(t)
-    all_tags = sorted(list(all_tags))
+    # --- 高级分类筛选 ---
+    with st.expander("🔍 开启高级筛选（年代/类型/评分）", expanded=True):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            years = sorted([y for y in df['year'].unique() if y != "未知"], reverse=True)
+            sel_year = st.multiselect("出品年份", years)
+        with c2:
+            # 提取所有标签
+            all_tags = sorted(list(set([t for tags in df['tags'] for t in tags])))
+            sel_tags = st.multiselect("番剧类型", all_tags)
+        with c3:
+            status_map = {1:"想看", 2:"看过", 3:"在看", 4:"搁置", 5:"抛弃"}
+            sel_status = st.multiselect("观看状态", list(status_map.values()))
 
-    # 第一排筛选：基础属性
-    col_k, col_y, col_s, col_t = st.columns(4)
-    with col_k:
-        keyword = st.text_input("番剧名称 (可留空)", "")
-    with col_y:
-        sel_year = st.selectbox("首播年份", ["全部"] + all_years)
-    with col_s:
-        status_map = {"全部": -1, "想看": 1, "看过": 2, "在看": 3, "搁置": 4, "抛弃": 5}
-        sel_status = st.selectbox("观看状态", list(status_map.keys()))
-    with col_t:
-        sel_tags = st.multiselect("类型标签 (可多选)", all_tags, placeholder="例如: 搞笑, 异世界")
+        r1, r2 = st.columns(2)
+        with r1:
+            my_range = st.slider("我的评分区间", 0, 10, (0, 10))
+        with r2:
+            gb_range = st.slider("站内评分区间", 0.0, 10.0, (0.0, 10.0))
 
-    # 第二排筛选：评分区间滑动条
-    col_rate1, col_rate2 = st.columns(2)
-    with col_rate1:
-        my_rate_range = st.slider("我的评分区间", 0, 10, (0, 10))
-    with col_rate2:
-        global_rate_range = st.slider("站内评分区间", 0.0, 10.0, (0.0, 10.0))
-
-    # --- 执行过滤逻辑 ---
+    # --- 过滤逻辑 ---
     f_df = df.copy()
-    if keyword: f_df = f_df[f_df['name_cn'].str.contains(keyword, case=False, na=False)]
-    if sel_year != "全部": f_df = f_df[f_df['year'] == sel_year]
-    if sel_status != "全部": f_df = f_df[f_df['status'] == status_map[sel_status]]
+    if sel_year: f_df = f_df[f_df['year'].isin(sel_year)]
+    if sel_status: 
+        inv_status = {v: k for k, v in status_map.items()}
+        f_df = f_df[f_df['status'].isin([inv_status[s] for s in sel_status])]
     if sel_tags:
-        # 只要包含所选标签中的任意一个即可
-        f_df = f_df[f_df['tags'].apply(lambda tags: any(t in sel_tags for t in tags) if isinstance(tags, list) else False)]
-    
-    # 评分区间过滤
-    f_df = f_df[(f_df['my_rate'] >= my_rate_range[0]) & (f_df['my_rate'] <= my_rate_range[1])]
-    f_df = f_df[(f_df['global_score'] >= global_rate_range[0]) & (f_df['global_score'] <= global_rate_range[1])]
+        f_df = f_df[f_df['tags'].apply(lambda x: any(t in sel_tags for t in x))]
+    f_df = f_df[(f_df['my_rate'] >= my_range[0]) & (f_df['my_rate'] <= my_range[1])]
+    f_df = f_df[(f_df['global_score'] >= gb_range[0]) & (f_df['global_score'] <= gb_range[1])]
 
-    st.markdown(f"**过滤结果：共匹配到 {len(f_df)} 部番剧**")
+    # --- 展示标签页 ---
+    t1, t2 = st.tabs(["✨ 评价时光机 (按时间排序)", "📊 审美分布图"])
 
-    # --- 3. 展示区 ---
-    tab1, tab2 = st.tabs(["✨ 追番评价库", "📊 统计图表"])
-
-    with tab1:
-        rev_status_map = {v: k for k, v in status_map.items() if v != -1}
-        # 默认按照我的评分排序，好番在前
-        for _, row in f_df.sort_values("my_rate", ascending=False).iterrows():
+    with t1:
+        st.write(f"当前筛选下有 {len(f_df)} 部作品")
+        # 按更新时间倒序排列，实现“时光机”效果
+        display_df = f_df.sort_values("updated_at", ascending=False) if 'updated_at' in f_df.columns else f_df
+        
+        for _, row in display_df.iterrows():
             with st.expander(f"{row['name_cn']} —— ⭐{row['my_rate'] if row['my_rate']>0 else '未评'}"):
-                st.write(f"**年份:** {row['year']} | **站内分:** {row['global_score']} | **状态:** {rev_status_map.get(row['status'], '未知')}")
-                st.caption(f"标签: {', '.join(row['tags']) if isinstance(row['tags'], list) else '无'}")
+                st.write(f"**更新时间:** {row.get('updated_at', '未知')}")
+                st.write(f"**站内评分:** {row['global_score']} | **年份:** {row['year']}")
                 if row['my_comment']:
-                    st.info(f"📝 {row['my_comment']}")
-                else:
-                    st.write("*暂无评价内容*")
+                    st.info(f"我的评价：{row['my_comment']}")
+                st.caption(f"标签: {' / '.join(row['tags'])}")
 
-    with tab2:
+    with t2:
         if not f_df.empty:
-            fig = px.histogram(f_df[f_df['my_rate']>0], x="my_rate", title="当前筛选条件下的评分分布", color_discrete_sequence=['#ff9999'])
+            fig = px.scatter(f_df[f_df['my_rate']>0], x="global_score", y="my_rate", 
+                           hover_name="name_cn", size_max=15, 
+                           labels={"global_score":"全站均分", "my_rate":"我的评分"})
             st.plotly_chart(fig, use_container_width=True)
