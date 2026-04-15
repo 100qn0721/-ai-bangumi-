@@ -5,7 +5,7 @@ import os
 from tqdm import tqdm
 
 # =========================
-# 1. 核心配置与个人简介
+# 1. 核心配置
 # =========================
 USERNAME = "905494" 
 TOKEN = "3ARCQX8efLOL3M8vRhYOIDETaauJZtEE6n34F5OD"             
@@ -35,55 +35,40 @@ BIO = """欢迎来加好友)
 问我给的评分为什么这么高？
 小登补番肯定看自己喜欢的啊，给分不就高了吗(ง •_•)ง"""
 
-LIMIT = 50
 SUBJECT_TYPE = 2 
+LIMIT = 50
 
 base_path = os.path.dirname(os.path.abspath(__file__))
 SAVE_JSON = os.path.join(base_path, "bangumi_data.json")
 TEMP_FILE = os.path.join(base_path, "bangumi_temp.json")
-
 STOP_TAGS = {"日本", "动画", "TV", "OVA", "核心", "系列"}
 
-# =========================
-# 2. 初始化 Session
-# =========================
 session = requests.Session()
-headers = {"User-Agent": f"BangumiVisualEngine/7.0 (User:{USERNAME})"}
-if TOKEN:
-    headers["Authorization"] = f"Bearer {TOKEN}"
+headers = {"User-Agent": f"BangumiVisualEngine/7.1 (User:{USERNAME})"}
+if TOKEN: headers["Authorization"] = f"Bearer {TOKEN}"
 session.headers.update(headers)
 
 def fetch(url, retries=5):
-    delay = 1
     for i in range(retries):
         try:
             r = session.get(url, timeout=12)
             if r.status_code == 200: return r.json()
-            elif r.status_code == 429: time.sleep(15 * (i + 1))
+            elif r.status_code == 429: time.sleep(15)
         except: pass
-        time.sleep(delay)
-        delay *= 2
+        time.sleep(2)
     return None
 
 def get_subject_score(sid):
-    url = f"https://api.bgm.tv/v0/subjects/{sid}"
-    data = fetch(url)
-    if data:
-        rating = data.get("rating", {})
-        return rating.get("score", 0)
-    return 0
+    data = fetch(f"https://api.bgm.tv/v0/subjects/{sid}")
+    return data.get("rating", {}).get("score", 0) if data else 0
 
 def slim(item):
     subject = item.get("subject", {})
     sid = subject.get("id")
     if not sid: return None
     
-    my_rate = item.get("rate", 0)
-    my_comment = item.get("comment") 
-    
     print(f" 🔍 同步站内评分: {subject.get('name_cn') or subject.get('name')}")
     global_score = get_subject_score(sid)
-    
     raw_tags = [t.get("name") for t in subject.get("tags", []) if isinstance(t, dict)]
     filtered_tags = [t for t in raw_tags if t not in STOP_TAGS][:10]
     
@@ -93,14 +78,13 @@ def slim(item):
         "year": subject.get("date", "")[:4] if subject.get("date") else "未知",
         "global_score": global_score,
         "status": item.get("type"), 
-        "my_rate": my_rate,
-        "my_comment": my_comment, 
-        "tags": filtered_tags
+        "my_rate": item.get("rate", 0),
+        "my_comment": item.get("comment"), 
+        "tags": filtered_tags,
+        "updated_at": item.get("updated_at") # 关键：抓取你的操作动态时间
     }
 
-# =========================
-# 3. 数据同步逻辑
-# =========================
+# --- 数据同步逻辑 ---
 if os.path.exists(TEMP_FILE):
     with open(TEMP_FILE, "r", encoding="utf-8") as f:
         state = json.load(f)
@@ -109,46 +93,36 @@ else:
     OFFSET, all_data_map = 0, {}
 
 probe_res = fetch(f"https://api.bgm.tv/v0/users/{USERNAME}/collections?limit=1&offset=0&subject_type={SUBJECT_TYPE}")
-if not probe_res: exit("❌ 无法连接到 API")
+if not probe_res: exit("❌ API连接失败")
 
 total_count = probe_res.get("total", 0)
 pbar = tqdm(total=total_count, desc="🎬 抓取进度")
 pbar.n = len(all_data_map)
-pbar.refresh()
 
 while OFFSET < total_count:
-    url = f"https://api.bgm.tv/v0/users/{USERNAME}/collections?limit={LIMIT}&offset={OFFSET}&subject_type={SUBJECT_TYPE}"
-    res = fetch(url)
+    res = fetch(f"https://api.bgm.tv/v0/users/{USERNAME}/collections?limit={LIMIT}&offset={OFFSET}&subject_type={SUBJECT_TYPE}")
     if not res or "data" not in res: break
     for item in res["data"]:
         sid_str = str(item.get("subject", {}).get("id"))
-        if sid_str in all_data_map and all_data_map[sid_str].get("global_score", 0) > 0:
-            continue
+        if sid_str in all_data_map and all_data_map[sid_str].get("global_score", 0) > 0: continue
         s_item = slim(item)
         if s_item: all_data_map[str(s_item["subject_id"])] = s_item
         pbar.update(1)
-        
     OFFSET += LIMIT
     with open(TEMP_FILE, "w", encoding="utf-8") as f:
         json.dump({"offset": OFFSET, "data_map": all_data_map}, f, ensure_ascii=False)
-    time.sleep(0.4)
+    time.sleep(0.5)
 
 pbar.close()
 
-# =========================
-# 4. 构建最终 JSON 结构
-# =========================
+# --- 构建最终 JSON ---
 final_output = {
-    "user_info": {
-        "username": USERNAME,
-        "bio": BIO
-    },
+    "user_info": {"username": USERNAME, "bio": BIO},
     "collections": list(all_data_map.values())
 }
 
-if final_output["collections"]:
-    with open(SAVE_JSON, "w", encoding="utf-8") as f:
-        json.dump(final_output, f, ensure_ascii=False, indent=2)
-    
-    if os.path.exists(TEMP_FILE): os.remove(TEMP_FILE)
-    print(f"\n🎉 成功！生成 JSON 文件: {SAVE_JSON}")
+with open(SAVE_JSON, "w", encoding="utf-8") as f:
+    json.dump(final_output, f, ensure_ascii=False, indent=2)
+
+if os.path.exists(TEMP_FILE): os.remove(TEMP_FILE)
+print(f"\n🎉 成功！新版 JSON 已生成，包含动态时间。")
