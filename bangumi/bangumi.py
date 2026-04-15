@@ -10,7 +10,6 @@ from tqdm import tqdm
 USERNAME = "905494" 
 TOKEN = "3ARCQX8efLOL3M8vRhYOIDETaauJZtEE6n34F5OD"             
 
-# 直接在脚本里定义你的个人简介
 BIO = """欢迎来加好友)
 我也没啥阅历，瞎看番的，一个入坑晚的小登
 ----------------------------------------------------------------------
@@ -49,7 +48,7 @@ STOP_TAGS = {"日本", "动画", "TV", "OVA", "核心", "系列"}
 # 2. 初始化 Session
 # =========================
 session = requests.Session()
-headers = {"User-Agent": f"BangumiVisualEngine/6.7 (User:{USERNAME})"}
+headers = {"User-Agent": f"BangumiVisualEngine/7.0 (User:{USERNAME})"}
 if TOKEN:
     headers["Authorization"] = f"Bearer {TOKEN}"
 session.headers.update(headers)
@@ -82,7 +81,7 @@ def slim(item):
     my_rate = item.get("rate", 0)
     my_comment = item.get("comment") 
     
-    print(f" 🔍 正在同步站内评分: {subject.get('name_cn') or subject.get('name')}")
+    print(f" 🔍 同步站内评分: {subject.get('name_cn') or subject.get('name')}")
     global_score = get_subject_score(sid)
     
     raw_tags = [t.get("name") for t in subject.get("tags", []) if isinstance(t, dict)]
@@ -152,4 +151,4 @@ if final_output["collections"]:
         json.dump(final_output, f, ensure_ascii=False, indent=2)
     
     if os.path.exists(TEMP_FILE): os.remove(TEMP_FILE)
-    print(f"\n🎉 成功！简介已嵌入。数据已写入: {SAVE_JSON}")
+    print(f"\n🎉 成功！生成 JSON 文件: {SAVE_JSON}")
