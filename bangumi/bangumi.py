@@ -7,10 +7,35 @@ from collections import Counter
 import numpy as np
 
 # =========================
-# 配置
+# 1. 核心配置与个人简介
 # =========================
-USERNAME = "你的用户名"
-TOKEN = ""
+USERNAME = "905494"
+TOKEN = "3ARCQX8efLOL3M8vRhYOIDETaauJZtEE6n34F5OD"
+
+BIO = """欢迎来加好友)
+我也没啥阅历，瞎看番的，一个入坑晚的小登
+----------------------------------------------------------------------
+评分自己主观感受为重，大部分是自己的情感表达，所以感叹句子比较多
+我自己看的开心舒服就是高分
+不懂什么分镜节奏之类的，也全靠自己的感觉
+就算剧情节奏小崩之类的，没影响我观感就行
+厨力 大于 有趣 大于 剧情 大于 制作
+情绪价值和给我留下的印象很重要
+----------------------------------------------------------------------
+(主观角度)
+4分基本就是到偏差的了
+5分差不多厕纸
+6分是一般，或者说是能看的厕纸级别的
+7分，认为不错的番，能让我产生好感的
+8分，给我惊喜的，确实有意思的
+9分的基本厨力和喜爱度占了一半程度
+10分基本就是我主观上的认为的神作
+----------------------------------------------------------------------
+看番基本是追当季度番，外加补一部以前的番
+不太喜欢看日常类的，感觉有点乏味，也不太喜欢需要对电波的，也不太想看画风特别老的动漫，机甲类型的也不太感冒，其他的除了特别恶心的bl都接受，也都愿意看
+----------------------------------------------------------------------
+问我给的评分为什么这么高？
+小登补番肯定看自己喜欢的啊，给分不就高了吗(ง •_•)ง"""
 
 SUBJECT_TYPE = 2
 LIMIT = 50
@@ -22,13 +47,13 @@ TEMP_FILE = os.path.join(base_path, "bangumi_temp.json")
 STOP_TAGS = {"日本", "动画", "TV", "OVA", "系列"}
 
 session = requests.Session()
-headers = {"User-Agent": f"BangumiAIEngine/9.0 (User:{USERNAME})"}
+headers = {"User-Agent": f"BangumiAIEngine/Final (User:{USERNAME})"}
 if TOKEN:
     headers["Authorization"] = f"Bearer {TOKEN}"
 session.headers.update(headers)
 
 # =========================
-# 请求函数
+# 2. 请求与精简逻辑
 # =========================
 def fetch(url, retries=5):
     for i in range(retries):
@@ -43,16 +68,10 @@ def fetch(url, retries=5):
         time.sleep(2)
     return None
 
-# =========================
-# 获取评分
-# =========================
 def get_score(sid):
     data = fetch(f"https://api.bgm.tv/v0/subjects/{sid}")
     return data.get("rating", {}).get("score", 0) if data else 0
 
-# =========================
-# 精简数据
-# =========================
 def slim(item):
     subject = item.get("subject", {})
     sid = subject.get("id")
@@ -61,6 +80,8 @@ def slim(item):
 
     raw_tags = [t.get("name") for t in subject.get("tags", []) if isinstance(t, dict)]
     tags = [t for t in raw_tags if t not in STOP_TAGS][:10]
+    
+    print(f" 🔍 同步数据: {subject.get('name_cn') or subject.get('name')}")
 
     return {
         "subject_id": sid,
@@ -75,35 +96,7 @@ def slim(item):
     }
 
 # =========================
-# 推荐函数
-# =========================
-def get_recommendations(top_tags, watched_ids, limit=20):
-    results = []
-
-    for tag in top_tags[:3]:
-        url = f"https://api.bgm.tv/v0/search/subjects?keyword={tag}&limit=10"
-        data = fetch(url)
-
-        if not data or "data" not in data:
-            continue
-
-        for item in data["data"]:
-            sid = item.get("id")
-
-            if not sid or str(sid) in watched_ids:
-                continue
-
-            results.append({
-                "name": item.get("name_cn") or item.get("name"),
-                "score": item.get("rating", {}).get("score", 0),
-                "tag": tag
-            })
-
-    results = sorted(results, key=lambda x: x["score"], reverse=True)
-    return results[:limit]
-
-# =========================
-# 抓取数据
+# 3. 抓取数据
 # =========================
 if os.path.exists(TEMP_FILE):
     os.remove(TEMP_FILE)
@@ -112,6 +105,7 @@ OFFSET = 0
 all_data_map = {}
 
 probe = fetch(f"https://api.bgm.tv/v0/users/{USERNAME}/collections?limit=1&subject_type={SUBJECT_TYPE}")
+if not probe: exit("❌ 无法连接到 API")
 total = probe.get("total", 0)
 
 pbar = tqdm(total=total, desc="🎬 抓取进度")
@@ -128,10 +122,8 @@ while OFFSET < total:
         pbar.update(1)
 
     OFFSET += LIMIT
-
     with open(TEMP_FILE, "w", encoding="utf-8") as f:
         json.dump({"offset": OFFSET}, f)
-
     time.sleep(0.5)
 
 pbar.close()
@@ -139,7 +131,7 @@ pbar.close()
 collections = list(all_data_map.values())
 
 # =========================
-# AI画像
+# 4. 🧠 AI画像计算
 # =========================
 watched = [d for d in collections if d["status"] == 2]
 
@@ -179,20 +171,28 @@ ai_profile = {
 }
 
 # =========================
-# 推荐
+# 5. 🎯 推荐接口
 # =========================
-watched_ids = set(all_data_map.keys())
+high_score = [d for d in watched if d["my_rate"] >= 8]
+low_score = [d for d in watched if d["my_rate"] <= 5]
 
-recommendations = get_recommendations(top_tags, watched_ids)
+recommendation_hint = {
+    "high_score_examples": [d["name_cn"] for d in high_score[:10]],
+    "low_score_examples": [d["name_cn"] for d in low_score[:10]],
+    "preferred_tags": [t for t, _ in Counter(t for d in high_score for t in d["tags"]).most_common(5)],
+    "avoid_tags": [t for t, _ in Counter(t for d in low_score for t in d["tags"]).most_common(5)],
+    "summary": f"偏好 {'/'.join(top_tags)}"
+}
 
 # =========================
-# 输出
+# 6. 最终输出
 # =========================
 output = {
-    "user_info": {"username": USERNAME},
+    # 结合了你的用户名和BIO
+    "user_info": {"username": USERNAME, "bio": BIO},
     "collections": collections,
     "ai_profile": ai_profile,
-    "recommendations": recommendations
+    "recommendation_hint": recommendation_hint
 }
 
 with open(SAVE_JSON, "w", encoding="utf-8") as f:
@@ -201,4 +201,4 @@ with open(SAVE_JSON, "w", encoding="utf-8") as f:
 if os.path.exists(TEMP_FILE):
     os.remove(TEMP_FILE)
 
-print("\n🎉 完成！AI+推荐系统已生成")
+print("\n🎉 完成！已生成带有 AI画像 和 个人简介 的全新数据文件。")
