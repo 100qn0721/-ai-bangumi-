@@ -67,7 +67,7 @@ def slim(item):
     sid = subject.get("id")
     if not sid: return None
     
-    print(f" 🔍 同步站内评分: {subject.get('name_cn') or subject.get('name')}")
+    # 删除了排名抓取，大幅提升速度
     global_score = get_subject_score(sid)
     raw_tags = [t.get("name") for t in subject.get("tags", []) if isinstance(t, dict)]
     filtered_tags = [t for t in raw_tags if t not in STOP_TAGS][:10]
@@ -81,30 +81,24 @@ def slim(item):
         "my_rate": item.get("rate", 0),
         "my_comment": item.get("comment"), 
         "tags": filtered_tags,
-        "updated_at": item.get("updated_at") # 关键：抓取你的操作动态时间
+        "updated_at": item.get("updated_at")
     }
 
 # --- 数据同步逻辑 ---
-if os.path.exists(TEMP_FILE):
-    with open(TEMP_FILE, "r", encoding="utf-8") as f:
-        state = json.load(f)
-        OFFSET, all_data_map = state.get("offset", 0), state.get("data_map", {})
-else:
-    OFFSET, all_data_map = 0, {}
+# 强制清理旧缓存，确保能抓到更新时间
+if os.path.exists(TEMP_FILE): os.remove(TEMP_FILE)
+OFFSET, all_data_map = 0, {}
 
 probe_res = fetch(f"https://api.bgm.tv/v0/users/{USERNAME}/collections?limit=1&offset=0&subject_type={SUBJECT_TYPE}")
 if not probe_res: exit("❌ API连接失败")
 
 total_count = probe_res.get("total", 0)
 pbar = tqdm(total=total_count, desc="🎬 抓取进度")
-pbar.n = len(all_data_map)
 
 while OFFSET < total_count:
     res = fetch(f"https://api.bgm.tv/v0/users/{USERNAME}/collections?limit={LIMIT}&offset={OFFSET}&subject_type={SUBJECT_TYPE}")
     if not res or "data" not in res: break
     for item in res["data"]:
-        sid_str = str(item.get("subject", {}).get("id"))
-        if sid_str in all_data_map and all_data_map[sid_str].get("global_score", 0) > 0: continue
         s_item = slim(item)
         if s_item: all_data_map[str(s_item["subject_id"])] = s_item
         pbar.update(1)
